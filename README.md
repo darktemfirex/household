@@ -21,7 +21,6 @@ npm run build   # dist/ 빌드
 `main` 브랜치에 push하면 GitHub Actions가 빌드해서 GitHub Pages에 배포합니다.
 (저장소 Settings → Pages → Source: **GitHub Actions**)
 
-## 부부 공유 (Firebase Firestore)
-앱의 **설정 → 부부 공유**에서 `firebaseConfig`와 가족 코드를 입력하면 실시간 동기화됩니다.
-설정값은 저장소가 아닌 각자 기기의 브라우저에만 저장됩니다.
-Firestore 규칙은 앱 설정 화면에 안내되어 있습니다.
+## 부부 공유 (Firebase)
+Google 로그인 + Firestore 실시간 동기화. 허용된 이메일만 접근하도록 Firestore 보안 규칙으로 제한합니다.
+데이터 경로: `households/main/items`. 웹용 Firebase 설정값은 `src/store.ts`에 포함되어 있으며 공개되어도 안전합니다.
