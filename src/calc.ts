@@ -32,7 +32,8 @@ export function shiftKey(key: string, n: number): string {
 /** 해당 주기를 결제하는 월급일 = 주기 종료 달의 월급일 (예: 10/14~11/13 주기 ↔ 11/21 월급) */
 export function salaryDateOf(key: string, salaryDay: number): string {
   const [y, m] = key.split('-').map(Number);
-  return `${y}-${pad(m)}-${pad(salaryDay)}`;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); // 31일 설정 시 짧은 달은 말일로
+  return `${y}-${pad(m)}-${pad(Math.min(salaryDay, last))}`;
 }
 
 export interface Summary {

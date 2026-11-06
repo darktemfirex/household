@@ -246,6 +246,16 @@ function AmountInput({ value, onChange, placeholder }: { value: number; onChange
   );
 }
 
+/** 일자 선택: 1~31일만 선택 가능 (0·빈 값 입력 불가) */
+function DaySelect({ value, onChange, max = 31 }: { value: number; onChange: (n: number) => void; max?: number }) {
+  const v = Math.min(max, Math.max(1, value || 1));
+  return (
+    <select value={v} onChange={e => onChange(Number(e.target.value))}>
+      {Array.from({ length: max }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}일</option>)}
+    </select>
+  );
+}
+
 function EntrySheet({ init, onClose, save, remove }: {
   init: { type: 'expense' | 'income'; item?: Expense | Income };
   onClose: () => void; save: (i: Item) => void; remove: (id: string) => void;
@@ -354,7 +364,7 @@ function FixedSheet({ init, onClose, save, remove }: { init?: Fixed; onClose: ()
       <div className="sheet" onClick={e => e.stopPropagation()}>
         <label>항목명<input value={name} placeholder="예) 월세, 통신비, 보험료" onChange={e => setName(e.target.value)} /></label>
         <label>월 금액<AmountInput value={amount} onChange={setAmount} /></label>
-        <label>매월 결제일<input type="number" min={1} max={31} value={day} onChange={e => setDay(Number(e.target.value))} /></label>
+        <label>매월 결제일<DaySelect value={day} onChange={setDay} /></label>
         <label>결제 방식
           <div className="seg">
             <button className={method === 'card' ? 'on' : ''} onClick={() => setMethod('card')}>카드</button>
@@ -380,9 +390,9 @@ function SettingsTab({ settings, save, status, user, store }: {
   useEffect(() => setD(settings), [settings]);
   const [me, setMe] = useState(getMe());
 
-  const clamp = (n: number) => Math.min(28, Math.max(1, n || 1));
+  const clamp = (n: number, max: number) => Math.min(max, Math.max(1, n || 1));
   const saveSettings = () => {
-    save({ ...d, salaryDay: clamp(d.salaryDay), cardStartDay: clamp(d.cardStartDay), updatedAt: Date.now() });
+    save({ ...d, salaryDay: clamp(d.salaryDay, 31), cardStartDay: clamp(d.cardStartDay, 28), updatedAt: Date.now() });
     localStorage.setItem(ME_KEY, me.trim() || '나');
     notify('저장했어요.');
   };
@@ -400,9 +410,9 @@ function SettingsTab({ settings, save, status, user, store }: {
       <section className="card form">
         <h3>월급 <small>(부부 공통)</small></h3>
         <label>월급 (세후)<AmountInput value={d.salary} onChange={n => setD({ ...d, salary: n })} /></label>
-        <label>월급일 (매월)<input type="number" min={1} max={28} value={d.salaryDay} onChange={e => setD({ ...d, salaryDay: Number(e.target.value) })} /></label>
+        <label>월급일 (매월)<DaySelect value={d.salaryDay} onChange={n => setD({ ...d, salaryDay: n })} /></label>
         <h3>카드·저축 설정</h3>
-        <label>카드 주기 시작일 <small>(14 → 14일~다음달 13일)</small><input type="number" min={1} max={28} value={d.cardStartDay} onChange={e => setD({ ...d, cardStartDay: Number(e.target.value) })} /></label>
+        <label>카드 주기 시작일 <small>(14 → 14일~다음달 13일)</small><DaySelect max={28} value={d.cardStartDay} onChange={n => setD({ ...d, cardStartDay: n })} /></label>
         <label>월 저축 목표<AmountInput value={d.savingGoal} onChange={n => setD({ ...d, savingGoal: n })} /></label>
         <label>이 기기 사용자 이름 <small>(내역에 표시)</small><input value={me} onChange={e => setMe(e.target.value)} placeholder="나 / 아내" /></label>
         <button className="primary wide" onClick={saveSettings}>저장</button>
