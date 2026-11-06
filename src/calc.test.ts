@@ -35,6 +35,17 @@ describe('summarize', () => {
     const next = summarize(items, s, '2026-12', '2026-11-14');
     expect(next.cardVariable).toBe(999999);
   });
+  it('고정수익을 여러 개 등록하면 합산된다', () => {
+    const multi: Item[] = [
+      ...items,
+      { id: 'i1', kind: 'fixedIncome', name: '월급', amount: 3000000, day: 21, active: true, createdAt: 0 },
+      { id: 'i2', kind: 'fixedIncome', name: '아내 월급', amount: 2000000, day: 25, active: true, createdAt: 0 },
+      { id: 'i3', kind: 'fixedIncome', name: '중지', amount: 999, day: 1, active: false, createdAt: 0 },
+    ];
+    const r = summarize(multi, s, '2026-11', '2026-11-06');
+    expect(r.fixedIncome).toBe(5000000);
+    expect(r.fixedIncomes.map(f => f.name)).toEqual(['월급', '아내 월급']);
+  });
   it('카드 한도/잔액/일일 사용가능액', () => {
     const r = summarize(items, s, '2026-11', '2026-11-06');
     expect(r.cardBudget).toBe(4000000 - 800000 - 50000 - 500000);

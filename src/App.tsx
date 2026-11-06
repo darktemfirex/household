@@ -4,7 +4,7 @@ import { cycleKeyOf, shiftKey, summarize, todayStr, type Summary } from './calc'
 import { comma, digits, md, mdw, uid, won } from './format';
 import { notify, onNotify } from './notify';
 import { createCloudStore, readLocalItems, signInGoogle, signOutUser, watchAuth, type Store } from './store';
-import { CATEGORIES, DEFAULT_SETTINGS, type Expense, type Fixed, type Income, type Item, type Method, type Settings } from './types';
+import { CATEGORIES, DEFAULT_SETTINGS, type Expense, type Fixed, type FixedIncome, type Income, type Item, type Method, type Settings } from './types';
 
 type Tab = 'home' | 'ledger' | 'fixed' | 'settings';
 type Status = 'loading' | 'signedout' | 'connecting' | 'cloud' | 'error';
@@ -112,7 +112,7 @@ export default function App() {
         {tab === 'home' && <Home sum={sum} settings={settings} curKey={curKey} setKey={setKey} goSettings={() => setTab('settings')} />}
         {tab === 'ledger' && <Ledger sum={sum} setKey={setKey} onEdit={it => setSheet({ type: it.kind as 'expense' | 'income', item: it })} />}
         {tab === 'fixed' && <FixedTab items={items} save={save} remove={remove} />}
-        {tab === 'settings' && <SettingsTab settings={settings} save={save} status={status} user={user} store={store} />}
+        {tab === 'settings' && <IncomeTab items={items} settings={settings} save={save} remove={remove} status={status} user={user} store={store} />}
       </main>
       {tab !== 'settings' && tab !== 'fixed' && <button className="fab" onClick={() => setSheet({ type: 'expense' })}>＋ 입력</button>}
       <nav>
@@ -146,8 +146,8 @@ function Home({ sum, settings, curKey, setKey, goSettings }: { sum: Summary; set
   return (
     <>
       <CycleNav sum={sum} curKey={curKey} setKey={setKey} />
-      {settings.salary === 0 && (
-        <div className="card notice">월급이 아직 설정되지 않았어요. <button className="link" onClick={goSettings}>설정에서 월급 입력 →</button></div>
+      {sum.fixedIncome === 0 && (
+        <div className="card notice">고정수익(월급)이 아직 없어요. <button className="link" onClick={goSettings}>고정수익에서 등록 →</button></div>
       )}
       <section className={'card hero' + (over ? ' over' : '')}>
         <div className="lbl">{sum.isPast ? '주기 종료 시 남은 카드 한도' : '이번 주기 남은 카드 한도'}</div>
@@ -164,7 +164,9 @@ function Home({ sum, settings, curKey, setKey, goSettings }: { sum: Summary; set
       <section className="card">
         <h3>카드 한도 계산</h3>
         <dl>
-          <div><dt>월급 <small>({md(sum.salaryDate)}{sum.salaryReceived ? '' : ' 예정'})</small></dt><dd className="pos">+{won(sum.salary)}</dd></div>
+          {sum.fixedIncomes.map((f, i) => (
+            <div key={i}><dt>{f.name} <small>({md(f.date)}{f.received ? '' : ' 예정'})</small></dt><dd className="pos">+{won(f.amount)}</dd></div>
+          ))}
           <div><dt>기타 수입</dt><dd className="pos">+{won(sum.extraIncome)}</dd></div>
           <div><dt>고정비 (계좌이체·현금)</dt><dd className="neg">-{won(sum.transferFixed)}</dd></div>
           <div><dt>현금·이체 지출</dt><dd className="neg">-{won(sum.cashSpent)}</dd></div>
@@ -331,6 +333,7 @@ function FixedTab({ items, save, remove }: { items: Item[]; save: (i: Item) => v
         <dl>
           <div><dt>카드 자동결제 (카드 사용액에 포함)</dt><dd>{won(total('card'))}</dd></div>
           <div><dt>계좌이체·현금 (카드 한도에서 차감)</dt><dd>{won(total('cash'))}</dd></div>
+          <div className="total"><dt>월 고정비용 합계</dt><dd className="neg">{won(total('card') + total('cash'))}</dd></div>
         </dl>
       </section>
       {list.length === 0 && <p className="empty">등록된 고정비가 없어요. 월세·통신비·보험료 등을 추가해 보세요.</p>}
@@ -382,17 +385,54 @@ function FixedSheet({ init, onClose, save, remove }: { init?: Fixed; onClose: ()
   );
 }
 
-/* ---------------- 설정 ---------------- */
-function SettingsTab({ settings, save, status, user, store }: {
-  settings: Settings; save: (i: Item) => void; status: Status; user: User; store: Store | null;
+function IncomeSheet({ init, onClose, save, remove }: { init?: FixedIncome; onClose: () => void; save: (i: Item) => void; remove: (id: string) => void }) {
+  const [name, setName] = useState(init?.name ?? '');
+  const [amount, setAmount] = useState(init?.amount ?? 0);
+  const [day, setDay] = useState(init?.day ?? 21);
+  const [active, setActive] = useState(init?.active ?? true);
+  const submit = () => {
+    if (!name.trim() || amount <= 0) return notify('이름과 금액을 입력해 주세요.');
+    save({ id: init?.id ?? uid(), kind: 'fixedIncome', name: name.trim(), amount, day: Math.min(31, Math.max(1, day)), active, createdAt: init?.createdAt ?? Date.now() });
+    onClose();
+  };
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="sheet" onClick={e => e.stopPropagation()}>
+        <label>항목명<input value={name} placeholder="예) 내 월급, 아내 월급, 임대수입" onChange={e => setName(e.target.value)} /></label>
+        <label>월 금액<AmountInput value={amount} onChange={setAmount} /></label>
+        <label>매월 입금일<DaySelect value={day} onChange={setDay} /></label>
+        <label className="check"><input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} /> 적용 중</label>
+        <div className="actions">
+          {init && <DeleteButton onDelete={() => { remove(init.id); onClose(); }} />}
+          <button onClick={onClose}>취소</button>
+          <button className="primary" onClick={submit}>저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- 고정수익·설정 ---------------- */
+function IncomeTab({ items, settings, save, remove, status, user, store }: {
+  items: Item[]; settings: Settings; save: (i: Item) => void; remove: (id: string) => void; status: Status; user: User; store: Store | null;
 }) {
   const [d, setD] = useState(settings);
   useEffect(() => setD(settings), [settings]);
   const [me, setMe] = useState(getMe());
+  const list = items.filter((i): i is FixedIncome => i.kind === 'fixedIncome').sort((a, b) => a.day - b.day);
+  const [edit, setEdit] = useState<FixedIncome | 'new' | null>(null);
+  const total = list.filter(f => f.active).reduce((a, b) => a + b.amount, 0);
+
+  // 이전 버전의 단일 월급 설정을 고정수익 항목으로 1회 이전 (고정 id 로 중복 방지)
+  useEffect(() => {
+    if (status !== 'cloud' || settings.salary <= 0 || list.length > 0) return;
+    save({ id: 'fi-salary', kind: 'fixedIncome', name: '월급', amount: settings.salary, day: settings.salaryDay, active: true, createdAt: Date.now() });
+    save({ ...settings, salary: 0, updatedAt: Date.now() });
+  }, [status, settings, list.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clamp = (n: number, max: number) => Math.min(max, Math.max(1, n || 1));
   const saveSettings = () => {
-    save({ ...d, salaryDay: clamp(d.salaryDay, 31), cardStartDay: clamp(d.cardStartDay, 28), updatedAt: Date.now() });
+    save({ ...d, cardStartDay: clamp(d.cardStartDay, 28), updatedAt: Date.now() });
     localStorage.setItem(ME_KEY, me.trim() || '나');
     notify('저장했어요.');
   };
@@ -406,11 +446,23 @@ function SettingsTab({ settings, save, status, user, store }: {
   return (
     <>
       <h2>고정수익</h2>
-      <p className="hint">월급은 한 번 설정하면 매월 자동 반영돼요. 금액이 바뀔 때만 수정하세요.</p>
-      <section className="card form">
-        <h3>월급 <small>(부부 공통)</small></h3>
-        <label>월급 (세후)<AmountInput value={d.salary} onChange={n => setD({ ...d, salary: n })} /></label>
-        <label>월급일 (매월)<DaySelect value={d.salaryDay} onChange={n => setD({ ...d, salaryDay: n })} /></label>
+      <p className="hint">월급·부수입 등을 여러 개 등록할 수 있어요. 한 번 등록하면 매월 자동 반영되고, 금액이 바뀔 때만 수정하세요.</p>
+      <section className="card">
+        <dl><div className="total"><dt>월 고정수익 합계</dt><dd className="pos">+{won(total)}</dd></div></dl>
+      </section>
+      {list.length === 0 && <p className="empty">등록된 고정수익이 없어요. 월급을 추가해 보세요.</p>}
+      <section className="card">
+        {list.map(f => (
+          <button className={'item' + (f.active ? '' : ' off')} key={f.id} onClick={() => setEdit(f)}>
+            <div><b>{f.name}</b><small>매월 {f.day}일{f.active ? '' : ' · 중지'}</small></div>
+            <span className="pos">+{won(f.amount)}</span>
+          </button>
+        ))}
+      </section>
+      <button className="primary wide" onClick={() => setEdit('new')}>＋ 고정수익 추가</button>
+      {edit && <IncomeSheet init={edit === 'new' ? undefined : edit} onClose={() => setEdit(null)} save={save} remove={remove} />}
+
+      <section className="card form" style={{ marginTop: 16 }}>
         <h3>카드·저축 설정</h3>
         <label>카드 주기 시작일 <small>(14 → 14일~다음달 13일)</small><DaySelect max={28} value={d.cardStartDay} onChange={n => setD({ ...d, cardStartDay: n })} /></label>
         <label>월 저축 목표<AmountInput value={d.savingGoal} onChange={n => setD({ ...d, savingGoal: n })} /></label>

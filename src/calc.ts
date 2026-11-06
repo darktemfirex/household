@@ -1,4 +1,4 @@
-import type { Expense, Fixed, Income, Item, Settings } from './types';
+import type { Expense, Fixed, FixedIncome, Income, Item, Settings } from './types';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const DAY = 86400000;
@@ -38,7 +38,7 @@ export function salaryDateOf(key: string, salaryDay: number): string {
 
 export interface Summary {
   key: string; start: string; end: string;
-  salary: number; salaryDate: string; salaryReceived: boolean;
+  fixedIncome: number; fixedIncomes: { name: string; amount: number; date: string; received: boolean }[];
   extraIncome: number; income: number;
   transferFixed: number; cashSpent: number; savingGoal: number;
   cardBudget: number;
@@ -56,9 +56,15 @@ export function summarize(items: Item[], s: Settings, key: string, today: string
   const incomes = items.filter((i): i is Income => i.kind === 'income' && inRange(i.date));
   const fixed = items.filter((i): i is Fixed => i.kind === 'fixed' && i.active);
 
-  const salaryDate = salaryDateOf(key, s.salaryDay);
+  // 고정수익 항목이 없으면 (이전 버전의) 단일 월급 설정을 사용
+  const fi = items.filter((i): i is FixedIncome => i.kind === 'fixedIncome' && i.active);
+  const sources = fi.length > 0 || s.salary <= 0 ? fi : [{ name: '월급', amount: s.salary, day: s.salaryDay }];
+  const fixedIncomes = sources
+    .map(f => { const date = salaryDateOf(key, f.day); return { name: f.name, amount: f.amount, date, received: date <= today }; })
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const fixedIncome = fixedIncomes.reduce((a, b) => a + b.amount, 0);
   const extraIncome = incomes.reduce((a, b) => a + b.amount, 0);
-  const income = s.salary + extraIncome;
+  const income = fixedIncome + extraIncome;
   const transferFixed = fixed.filter(f => f.method === 'cash').reduce((a, b) => a + b.amount, 0);
   const cardFixed = fixed.filter(f => f.method === 'card').reduce((a, b) => a + b.amount, 0);
   const cashSpent = expenses.filter(e => e.method === 'cash').reduce((a, b) => a + b.amount, 0);
@@ -77,7 +83,7 @@ export function summarize(items: Item[], s: Settings, key: string, today: string
 
   return {
     key, start, end,
-    salary: s.salary, salaryDate, salaryReceived: salaryDate <= today,
+    fixedIncome, fixedIncomes,
     extraIncome, income, transferFixed, cashSpent, savingGoal: s.savingGoal,
     cardBudget, cardVariable, cardFixed, cardUsed, cardRemaining,
     usedPct: cardBudget > 0 ? Math.min(100, Math.round((cardUsed / cardBudget) * 100)) : cardUsed > 0 ? 100 : 0,

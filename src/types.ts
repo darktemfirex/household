@@ -12,11 +12,15 @@ export interface Fixed {
   id: string; kind: 'fixed'; name: string; amount: number;
   day: number; method: Method; active: boolean; createdAt: number;
 }
+export interface FixedIncome {
+  id: string; kind: 'fixedIncome'; name: string; amount: number;
+  day: number; active: boolean; createdAt: number;
+}
 export interface Settings {
   id: 'settings'; kind: 'settings';
   salary: number; salaryDay: number; cardStartDay: number; savingGoal: number; updatedAt: number;
 }
-export type Item = Expense | Income | Fixed | Settings;
+export type Item = Expense | Income | Fixed | FixedIncome | Settings;
 
 export const DEFAULT_SETTINGS: Settings = {
   id: 'settings', kind: 'settings', salary: 0, salaryDay: 21, cardStartDay: 14, savingGoal: 0, updatedAt: 0,
