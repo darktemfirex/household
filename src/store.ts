@@ -1,3 +1,4 @@
+import type { User } from 'firebase/auth';
 import type { Item } from './types';
 
 export interface Store {
@@ -6,41 +7,54 @@ export interface Store {
   remove(id: string): void;
 }
 
-export interface SyncConfig { config: Record<string, unknown>; code: string }
-
-const ITEMS_KEY = 'household:items';
-const SYNC_KEY = 'household:sync';
-
-export const loadSync = (): SyncConfig | null => {
-  try { const v = localStorage.getItem(SYNC_KEY); return v ? JSON.parse(v) : null; } catch { return null; }
-};
-export const saveSync = (s: SyncConfig | null) => {
-  if (s) localStorage.setItem(SYNC_KEY, JSON.stringify(s)); else localStorage.removeItem(SYNC_KEY);
+// 웹 앱용 Firebase 설정값은 공개되어도 안전합니다. 접근 제어는 Firestore 보안 규칙(허용 이메일)이 담당합니다.
+const firebaseConfig = {
+  apiKey: 'AIzaSyBtSpahysjfQ2Xt_d1R9GYn44qAxe3rqu0',
+  authDomain: 'household-fc08c.firebaseapp.com',
+  projectId: 'household-fc08c',
+  storageBucket: 'household-fc08c.firebasestorage.app',
+  messagingSenderId: '114729248217',
+  appId: '1:114729248217:web:386c822d77395328c1a5c8',
 };
 
+/** 이전(공유 설정 전)에 이 기기 localStorage 에 쌓인 데이터 — 서버로 옮길 때만 사용 */
 export const readLocalItems = (): Item[] => {
-  try { return JSON.parse(localStorage.getItem(ITEMS_KEY) ?? '[]'); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem('household:items') ?? '[]'); } catch { return []; }
 };
 
-/** 이 기기에만 저장 (공유 설정 전 기본값) */
-export const localStore: Store = (() => {
-  const listeners = new Set<(items: Item[]) => void>();
-  const emit = () => { const v = readLocalItems(); listeners.forEach(l => l(v)); };
-  const write = (items: Item[]) => { localStorage.setItem(ITEMS_KEY, JSON.stringify(items)); emit(); };
-  window.addEventListener('storage', e => { if (e.key === ITEMS_KEY) emit(); });
-  return {
-    subscribe(cb) { listeners.add(cb); cb(readLocalItems()); return () => { listeners.delete(cb); }; },
-    save(item) { write([...readLocalItems().filter(i => i.id !== item.id), item]); },
-    remove(id) { write(readLocalItems().filter(i => i.id !== id)); },
-  };
-})();
+async function modules() {
+  const [{ initializeApp, getApps, getApp }, auth, fs] = await Promise.all([
+    import('firebase/app'), import('firebase/auth'), import('firebase/firestore'),
+  ]);
+  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  return { app, auth, fs };
+}
 
-/** Firebase Firestore 실시간 공유 (부부 기기 간 동기화). 경로: households/{code}/items/{id} */
-export async function createCloudStore({ config, code }: SyncConfig): Promise<Store> {
-  const [{ initializeApp, getApps, getApp }, fs] = await Promise.all([import('firebase/app'), import('firebase/firestore')]);
-  const app = getApps().some(a => a.name === 'household') ? getApp('household') : initializeApp(config, 'household');
-  const db = fs.getFirestore(app);
-  const col = fs.collection(db, 'households', code, 'items');
+export async function watchAuth(cb: (u: User | null) => void): Promise<() => void> {
+  const { app, auth } = await modules();
+  return auth.onAuthStateChanged(auth.getAuth(app), cb);
+}
+
+export async function signInGoogle() {
+  const { app, auth } = await modules();
+  await auth.signInWithPopup(auth.getAuth(app), new auth.GoogleAuthProvider());
+}
+
+export async function signOutUser() {
+  const { app, auth } = await modules();
+  await auth.signOut(auth.getAuth(app));
+}
+
+/** Firestore 실시간 공유. 경로: households/main/items/{id} */
+export async function createCloudStore(): Promise<Store> {
+  const { app, fs } = await modules();
+  let db;
+  try {
+    db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) });
+  } catch {
+    db = fs.getFirestore(app); // 이미 초기화된 경우
+  }
+  const col = fs.collection(db, 'households', 'main', 'items');
   const fail = (e: unknown) => alert('저장 실패: ' + String(e));
   return {
     subscribe(cb, onError) {

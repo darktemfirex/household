@@ -1,49 +1,77 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { User } from 'firebase/auth';
 import { cycleKeyOf, shiftKey, summarize, todayStr, type Summary } from './calc';
 import { comma, digits, md, mdw, uid, won } from './format';
-import { createCloudStore, loadSync, localStore, readLocalItems, saveSync, type Store, type SyncConfig } from './store';
+import { createCloudStore, readLocalItems, signInGoogle, signOutUser, watchAuth, type Store } from './store';
 import { CATEGORIES, DEFAULT_SETTINGS, type Expense, type Fixed, type Income, type Item, type Method, type Settings } from './types';
 
 type Tab = 'home' | 'ledger' | 'fixed' | 'settings';
-type Status = 'local' | 'connecting' | 'cloud' | 'error';
+type Status = 'loading' | 'signedout' | 'connecting' | 'cloud' | 'error';
 
 const ME_KEY = 'household:me';
 const getMe = () => localStorage.getItem(ME_KEY) || '나';
 
 function useItems() {
   const [items, setItems] = useState<Item[]>([]);
-  const [status, setStatus] = useState<Status>('local');
+  const [status, setStatus] = useState<Status>('loading');
   const [err, setErr] = useState('');
-  const [store, setStore] = useState<Store | null>(localStore);
-  const [sync, setSync] = useState<SyncConfig | null>(loadSync);
+  const [store, setStore] = useState<Store | null>(null);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
+    let off = () => {};
+    watchAuth(u => { setUser(u); setStatus(u ? 'connecting' : 'signedout'); if (!u) { setStore(null); setItems([]); } })
+      .then(f => { off = f; })
+      .catch(e => { setStatus('error'); setErr(String(e)); });
+    return () => off();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     let dead = false;
     let unsub = () => {};
-    setErr('');
-    if (!sync) {
-      setStore(localStore); setStatus('local');
-      unsub = localStore.subscribe(setItems);
-      return () => unsub();
-    }
-    setStore(null); setStatus('connecting');
-    createCloudStore(sync).then(s => {
+    createCloudStore().then(s => {
       if (dead) return;
       setStore(s);
       unsub = s.subscribe(
-        v => { setItems(v); setStatus('cloud'); },
-        e => { setStatus('error'); setErr(String(e)); },
+        v => { setItems(v); setStatus('cloud'); setErr(''); },
+        e => {
+          setStatus('error');
+          const msg = String(e);
+          setErr(msg.includes('permission') ? '허용되지 않은 계정입니다. 등록된 구글 계정으로 로그인해 주세요.' : msg);
+        },
       );
     }).catch(e => { if (!dead) { setStatus('error'); setErr(String(e)); } });
     return () => { dead = true; unsub(); };
-  }, [sync]);
+  }, [user]);
 
-  const applySync = (s: SyncConfig | null) => { saveSync(s); setSync(s); };
-  return { items, status, err, store, sync, applySync };
+  return { items, status, err, store, user };
+}
+
+function Login({ status, err }: { status: Status; err: string }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const go = async () => {
+    setBusy(true); setMsg('');
+    try { await signInGoogle(); } catch (e) { setMsg('로그인 실패: ' + String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="app login">
+      <div className="logo">₩</div>
+      <h2>우리집 가계부</h2>
+      {status === 'loading' ? <p className="hint">불러오는 중…</p> : (
+        <>
+          <p className="hint">등록된 구글 계정으로 로그인하면<br />부부가 같은 가계부를 함께 사용해요.</p>
+          <button className="primary wide" disabled={busy} onClick={go}>Google 계정으로 로그인</button>
+        </>
+      )}
+      {(msg || err) && <div className="banner err">{msg || err}</div>}
+    </div>
+  );
 }
 
 export default function App() {
-  const { items, status, err, store, sync, applySync } = useItems();
+  const { items, status, err, store, user } = useItems();
   const [tab, setTab] = useState<Tab>('home');
   const [sheet, setSheet] = useState<null | { type: 'expense' | 'income'; item?: Expense | Income }>(null);
   const today = todayStr();
@@ -55,18 +83,22 @@ export default function App() {
   useEffect(() => { setKey(curKey); }, [curKey]); // 14일이 되면 자동으로 새 주기로 전환(초기화)
 
   const sum = useMemo(() => summarize(items, settings, key, today), [items, settings, key, today]);
-  const save = (i: Item) => store ? store.save(i) : alert('공유 서버에 연결 중입니다. 잠시 후 다시 시도해 주세요.');
+  const save = (i: Item) => store ? store.save(i) : alert('서버에 연결 중입니다. 잠시 후 다시 시도해 주세요.');
   const remove = (id: string) => store?.remove(id);
+
+  if (!user) return <Login status={status} err={err} />;
 
   return (
     <div className="app">
-      {status === 'connecting' && <div className="banner">공유 서버에 연결 중…</div>}
-      {status === 'error' && <div className="banner err">공유 연결 오류: {err}</div>}
+      {status === 'connecting' && <div className="banner">서버에 연결 중…</div>}
+      {status === 'error' && (
+        <div className="banner err">연결 오류: {err} <button className="link" onClick={() => signOutUser()}>다른 계정으로 로그인</button></div>
+      )}
       <main>
         {tab === 'home' && <Home sum={sum} settings={settings} curKey={curKey} setKey={setKey} goSettings={() => setTab('settings')} />}
         {tab === 'ledger' && <Ledger sum={sum} setKey={setKey} onEdit={it => setSheet({ type: it.kind as 'expense' | 'income', item: it })} />}
         {tab === 'fixed' && <FixedTab items={items} save={save} remove={remove} />}
-        {tab === 'settings' && <SettingsTab settings={settings} save={save} status={status} sync={sync} applySync={applySync} store={store} />}
+        {tab === 'settings' && <SettingsTab settings={settings} save={save} status={status} user={user} store={store} />}
       </main>
       {tab !== 'settings' && tab !== 'fixed' && <button className="fab" onClick={() => setSheet({ type: 'expense' })}>＋ 입력</button>}
       <nav>
@@ -326,24 +358,12 @@ function FixedSheet({ init, onClose, save, remove }: { init?: Fixed; onClose: ()
 }
 
 /* ---------------- 설정 ---------------- */
-const RULES = `rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /households/{code}/items/{id} {
-      allow read, write: if true;
-    }
-  }
-}`;
-
-function SettingsTab({ settings, save, status, sync, applySync, store }: {
-  settings: Settings; save: (i: Item) => void; status: Status;
-  sync: SyncConfig | null; applySync: (s: SyncConfig | null) => void; store: Store | null;
+function SettingsTab({ settings, save, status, user, store }: {
+  settings: Settings; save: (i: Item) => void; status: Status; user: User; store: Store | null;
 }) {
   const [d, setD] = useState(settings);
   useEffect(() => setD(settings), [settings]);
   const [me, setMe] = useState(getMe());
-  const [cfgText, setCfgText] = useState(sync ? JSON.stringify(sync.config, null, 2) : '');
-  const [code, setCode] = useState(sync?.code ?? '');
 
   const clamp = (n: number) => Math.min(28, Math.max(1, n || 1));
   const saveSettings = () => {
@@ -351,29 +371,13 @@ function SettingsTab({ settings, save, status, sync, applySync, store }: {
     localStorage.setItem(ME_KEY, me.trim() || '나');
     alert('저장했어요.');
   };
-
-  const parseConfig = (): Record<string, unknown> | null => {
-    try {
-      // 콘솔의 `const firebaseConfig = {...};` 형태도 허용
-      let t = cfgText.trim().replace(/^const\s+\w+\s*=\s*/, '').replace(/;\s*$/, '');
-      t = t.replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":').replace(/,(\s*})/g, '$1');
-      const o = JSON.parse(t);
-      return o.projectId && o.apiKey ? o : null;
-    } catch { return null; }
-  };
-  const connect = () => {
-    const config = parseConfig();
-    if (!config) return alert('Firebase 설정(firebaseConfig)을 올바르게 붙여넣어 주세요.');
-    if (code.trim().length < 6) return alert('가족 코드는 6자 이상 입력해 주세요.');
-    applySync({ config, code: code.trim() });
-  };
   const uploadLocal = () => {
     const local = readLocalItems();
     if (!store || local.length === 0) return alert('올릴 이 기기 데이터가 없어요.');
-    if (!confirm(`이 기기에 저장된 ${local.length}건을 공유 서버로 올릴까요?`)) return;
+    if (!confirm(`이 기기에 저장된 ${local.length}건을 서버로 올릴까요?`)) return;
     local.forEach(i => store.save(i));
+    localStorage.removeItem('household:items');
   };
-  const randomCode = () => setCode('fam-' + Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(36).padStart(2, '0')).join('').slice(0, 12));
 
   return (
     <>
@@ -389,28 +393,10 @@ function SettingsTab({ settings, save, status, sync, applySync, store }: {
       </section>
 
       <section className="card form">
-        <h3>부부 공유 <small>{status === 'cloud' ? '🟢 동기화 중' : status === 'connecting' ? '🟡 연결 중' : status === 'error' ? '🔴 오류' : '⚪ 이 기기에만 저장 중'}</small></h3>
-        <p className="hint">Firebase(무료)에 연결하면 나와 아내의 폰이 같은 가계부를 실시간으로 함께 씁니다. 두 기기에서 <b>같은 설정·같은 가족 코드</b>를 입력하세요.</p>
-        <details>
-          <summary>Firebase 준비 방법 (최초 1회)</summary>
-          <ol className="hint">
-            <li><a href="https://console.firebase.google.com" target="_blank" rel="noreferrer">Firebase 콘솔</a>에서 프로젝트 생성</li>
-            <li>프로젝트 설정 → 앱 추가(웹 &lt;/&gt;) → 표시되는 <code>firebaseConfig</code> 복사</li>
-            <li>빌드 → Firestore Database → 데이터베이스 만들기(프로덕션 모드)</li>
-            <li>Firestore → 규칙 탭에 아래 내용을 붙여넣고 게시</li>
-          </ol>
-          <pre>{RULES}</pre>
-          <p className="hint">※ 가족 코드가 사실상 비밀번호 역할을 합니다. 추측하기 어려운 긴 코드를 쓰고 타인에게 공유하지 마세요.</p>
-        </details>
-        <label>firebaseConfig<textarea rows={6} value={cfgText} onChange={e => setCfgText(e.target.value)} placeholder={'{ apiKey: "...", projectId: "...", ... }'} /></label>
-        <label>가족 코드<div className="amt"><input value={code} onChange={e => setCode(e.target.value)} placeholder="6자 이상" /><button onClick={randomCode}>생성</button></div></label>
-        <button className="primary wide" onClick={connect}>{sync ? '공유 설정 변경' : '공유 연결'}</button>
-        {sync && (
-          <>
-            <button className="wide" onClick={uploadLocal} disabled={status !== 'cloud'}>이 기기 데이터를 공유 서버로 올리기</button>
-            <button className="wide danger" onClick={() => { if (confirm('공유 연결을 해제할까요? (서버 데이터는 유지됩니다)')) applySync(null); }}>공유 해제</button>
-          </>
-        )}
+        <h3>계정 <small>{status === 'cloud' ? '🟢 동기화 중' : status === 'error' ? '🔴 오류' : '🟡 연결 중'}</small></h3>
+        <p className="hint">{user.email} 로 로그인됨</p>
+        {readLocalItems().length > 0 && <button className="wide" onClick={uploadLocal} disabled={status !== 'cloud'}>이 기기에 남은 예전 데이터를 서버로 올리기</button>}
+        <button className="wide" onClick={() => signOutUser()}>로그아웃</button>
       </section>
     </>
   );
