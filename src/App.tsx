@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { cycleKeyOf, shiftKey, summarize, todayStr, type Summary } from './calc';
 import { comma, digits, md, mdw, uid, won } from './format';
+import { notify, onNotify } from './notify';
 import { createCloudStore, readLocalItems, signInGoogle, signOutUser, watchAuth, type Store } from './store';
 import { CATEGORIES, DEFAULT_SETTINGS, type Expense, type Fixed, type Income, type Item, type Method, type Settings } from './types';
 
@@ -48,6 +49,18 @@ function useItems() {
   return { items, status, err, store, user };
 }
 
+function Toast() {
+  const [msg, setMsg] = useState('');
+  useEffect(() => onNotify(m => { setMsg(m); setTimeout(() => setMsg(''), 3000); }), []);
+  return msg ? <div className="toast">{msg}</div> : null;
+}
+
+/** 삭제: 1번 누르면 '정말 삭제' 로 바뀌고, 한 번 더 누르면 삭제 (confirm() 대체) */
+function DeleteButton({ onDelete }: { onDelete: () => void }) {
+  const [ask, setAsk] = useState(false);
+  return <button className="danger" onClick={() => (ask ? onDelete() : setAsk(true))}>{ask ? '정말 삭제' : '삭제'}</button>;
+}
+
 function Login({ status, err }: { status: Status; err: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -83,13 +96,14 @@ export default function App() {
   useEffect(() => { setKey(curKey); }, [curKey]); // 14일이 되면 자동으로 새 주기로 전환(초기화)
 
   const sum = useMemo(() => summarize(items, settings, key, today), [items, settings, key, today]);
-  const save = (i: Item) => store ? store.save(i) : alert('서버에 연결 중입니다. 잠시 후 다시 시도해 주세요.');
+  const save = (i: Item) => store ? store.save(i) : notify('서버에 연결 중입니다. 잠시 후 다시 시도해 주세요.');
   const remove = (id: string) => store?.remove(id);
 
   if (!user) return <Login status={status} err={err} />;
 
   return (
     <div className="app">
+      <Toast />
       {status === 'connecting' && <div className="banner">서버에 연결 중…</div>}
       {status === 'error' && (
         <div className="banner err">연결 오류: {err} <button className="link" onClick={() => signOutUser()}>다른 계정으로 로그인</button></div>
@@ -102,7 +116,7 @@ export default function App() {
       </main>
       {tab !== 'settings' && tab !== 'fixed' && <button className="fab" onClick={() => setSheet({ type: 'expense' })}>＋ 입력</button>}
       <nav>
-        {([['home', '홈'], ['ledger', '내역'], ['fixed', '고정비'], ['settings', '설정']] as [Tab, string][]).map(([t, l]) => (
+        {([['home', '홈'], ['ledger', '내역'], ['fixed', '고정비용'], ['settings', '고정수익']] as [Tab, string][]).map(([t, l]) => (
           <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{l}</button>
         ))}
       </nav>
@@ -117,8 +131,8 @@ function CycleNav({ sum, curKey, setKey }: { sum: Summary; curKey?: string; setK
     <div className="cyclenav">
       <button onClick={() => setKey(shiftKey(sum.key, -1))}>◀</button>
       <div>
-        <b>{Number(sum.key.slice(5))}월 카드 주기</b>
-        <small>{md(sum.start)} ~ {md(sum.end)}{sum.isCurrent ? ' · 진행 중' : sum.isPast ? ' · 종료' : ' · 예정'}</small>
+        <b>{Number(sum.key.slice(5))}월 소비동향</b>
+        <small>카드 주기 {md(sum.start)} ~ {md(sum.end)}{sum.isCurrent ? ' · 진행 중' : sum.isPast ? ' · 종료' : ' · 예정'}</small>
       </div>
       <button onClick={() => setKey(shiftKey(sum.key, 1))}>▶</button>
       {curKey && sum.key !== curKey && <button className="chip" onClick={() => setKey(curKey)}>이번 주기</button>}
@@ -247,7 +261,7 @@ function EntrySheet({ init, onClose, save, remove }: {
   const editing = !!init.item;
 
   const submit = () => {
-    if (amount <= 0) return alert('금액을 입력해 주세요.');
+    if (amount <= 0) return notify('금액을 입력해 주세요.');
     const base = { id: init.item?.id ?? uid(), date, amount, who: init.item?.who ?? getMe(), createdAt: init.item?.createdAt ?? Date.now() };
     if (type === 'expense') save({ ...base, kind: 'expense', category, memo: memo.trim(), method });
     else save({ ...base, kind: 'income', title: memo.trim() || '수입' });
@@ -285,7 +299,7 @@ function EntrySheet({ init, onClose, save, remove }: {
           <input value={memo} placeholder={type === 'expense' ? '예) 마트 장보기' : '예) 상여금, 용돈'} onChange={e => setMemo(e.target.value)} />
         </label>
         <div className="actions">
-          {editing && <button className="danger" onClick={() => { if (confirm('삭제할까요?')) { remove(init.item!.id); onClose(); } }}>삭제</button>}
+          {editing && <DeleteButton onDelete={() => { remove(init.item!.id); onClose(); }} />}
           <button onClick={onClose}>취소</button>
           <button className="primary" onClick={submit}>{editing ? '수정' : '저장'}</button>
         </div>
@@ -302,6 +316,7 @@ function FixedTab({ items, save, remove }: { items: Item[]; save: (i: Item) => v
   return (
     <>
       <h2>고정비용</h2>
+      <p className="hint">한 번 등록하면 매월 자동 반영돼요. 금액이 바뀔 때만 항목을 눌러 수정하세요.</p>
       <section className="card">
         <dl>
           <div><dt>카드 자동결제 (카드 사용액에 포함)</dt><dd>{won(total('card'))}</dd></div>
@@ -330,7 +345,7 @@ function FixedSheet({ init, onClose, save, remove }: { init?: Fixed; onClose: ()
   const [method, setMethod] = useState<Method>(init?.method ?? 'cash');
   const [active, setActive] = useState(init?.active ?? true);
   const submit = () => {
-    if (!name.trim() || amount <= 0) return alert('이름과 금액을 입력해 주세요.');
+    if (!name.trim() || amount <= 0) return notify('이름과 금액을 입력해 주세요.');
     save({ id: init?.id ?? uid(), kind: 'fixed', name: name.trim(), amount, day: Math.min(31, Math.max(1, day)), method, active, createdAt: init?.createdAt ?? Date.now() });
     onClose();
   };
@@ -348,7 +363,7 @@ function FixedSheet({ init, onClose, save, remove }: { init?: Fixed; onClose: ()
         </label>
         <label className="check"><input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} /> 적용 중</label>
         <div className="actions">
-          {init && <button className="danger" onClick={() => { if (confirm('삭제할까요?')) { remove(init.id); onClose(); } }}>삭제</button>}
+          {init && <DeleteButton onDelete={() => { remove(init.id); onClose(); }} />}
           <button onClick={onClose}>취소</button>
           <button className="primary" onClick={submit}>저장</button>
         </div>
@@ -369,23 +384,24 @@ function SettingsTab({ settings, save, status, user, store }: {
   const saveSettings = () => {
     save({ ...d, salaryDay: clamp(d.salaryDay), cardStartDay: clamp(d.cardStartDay), updatedAt: Date.now() });
     localStorage.setItem(ME_KEY, me.trim() || '나');
-    alert('저장했어요.');
+    notify('저장했어요.');
   };
   const uploadLocal = () => {
     const local = readLocalItems();
-    if (!store || local.length === 0) return alert('올릴 이 기기 데이터가 없어요.');
-    if (!confirm(`이 기기에 저장된 ${local.length}건을 서버로 올릴까요?`)) return;
+    if (!store || local.length === 0) return notify('올릴 이 기기 데이터가 없어요.');
     local.forEach(i => store.save(i));
     localStorage.removeItem('household:items');
   };
 
   return (
     <>
-      <h2>설정</h2>
+      <h2>고정수익</h2>
+      <p className="hint">월급은 한 번 설정하면 매월 자동 반영돼요. 금액이 바뀔 때만 수정하세요.</p>
       <section className="card form">
-        <h3>기본 설정 <small>(부부 공통)</small></h3>
+        <h3>월급 <small>(부부 공통)</small></h3>
         <label>월급 (세후)<AmountInput value={d.salary} onChange={n => setD({ ...d, salary: n })} /></label>
         <label>월급일 (매월)<input type="number" min={1} max={28} value={d.salaryDay} onChange={e => setD({ ...d, salaryDay: Number(e.target.value) })} /></label>
+        <h3>카드·저축 설정</h3>
         <label>카드 주기 시작일 <small>(14 → 14일~다음달 13일)</small><input type="number" min={1} max={28} value={d.cardStartDay} onChange={e => setD({ ...d, cardStartDay: Number(e.target.value) })} /></label>
         <label>월 저축 목표<AmountInput value={d.savingGoal} onChange={n => setD({ ...d, savingGoal: n })} /></label>
         <label>이 기기 사용자 이름 <small>(내역에 표시)</small><input value={me} onChange={e => setMe(e.target.value)} placeholder="나 / 아내" /></label>

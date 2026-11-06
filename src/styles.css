@@ -87,3 +87,4 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 5px; }
 a { color: var(--pri); }
 .login { text-align: center; padding-top: 22vh; }
 .login .logo { width: 72px; height: 72px; margin: 0 auto 12px; border-radius: 18px; background: var(--pri); color: #fff; font-size: 40px; font-weight: 700; display: grid; place-items: center; }
+.toast { position: fixed; left: 50%; bottom: calc(150px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #1b2333; color: #fff; padding: 10px 16px; border-radius: 99px; font-size: 14px; z-index: 30; box-shadow: 0 4px 14px rgba(0,0,0,.3); }

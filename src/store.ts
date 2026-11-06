@@ -1,4 +1,5 @@
 import type { User } from 'firebase/auth';
+import { notify } from './notify';
 import type { Item } from './types';
 
 export interface Store {
@@ -55,7 +56,7 @@ export async function createCloudStore(): Promise<Store> {
     db = fs.getFirestore(app); // 이미 초기화된 경우
   }
   const col = fs.collection(db, 'households', 'main', 'items');
-  const fail = (e: unknown) => alert('저장 실패: ' + String(e));
+  const fail = (e: unknown) => notify('저장/삭제 실패: ' + String(e));
   return {
     subscribe(cb, onError) {
       return fs.onSnapshot(col, snap => cb(snap.docs.map(d => d.data() as Item)), e => onError?.(e));
