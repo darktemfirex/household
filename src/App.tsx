@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth';
 import { cycleKeyOf, shiftKey, summarize, todayStr, type Summary } from './calc';
 import { comma, digits, md, mdw, uid, won } from './format';
 import { notify, onNotify } from './notify';
+import { readReceipt } from './receipt';
 import { createCloudStore, readLocalItems, signInGoogle, signOutUser, watchAuth, type Store } from './store';
 import { CATEGORIES, DEFAULT_SETTINGS, type Expense, type Fixed, type FixedIncome, type Income, type Item, type Method, type Settings } from './types';
 
@@ -271,6 +272,22 @@ function EntrySheet({ init, onClose, save, remove }: {
   const [method, setMethod] = useState<Method>(ex?.method ?? 'card');
   const [memo, setMemo] = useState(ex?.memo ?? inc?.title ?? '');
   const editing = !!init.item;
+  const [scanMsg, setScanMsg] = useState('');
+
+  const scan = async (file: File) => {
+    try {
+      const r = await readReceipt(file, setScanMsg);
+      if (r.amount > 0) setAmount(r.amount);
+      if (r.date) setDate(r.date);
+      if (r.merchant) setMemo(r.merchant);
+      if (r.method) setMethod(r.method);
+      notify(r.amount > 0 ? '인식했어요. 금액·날짜를 꼭 확인해 주세요.' : '금액을 찾지 못했어요. 직접 입력해 주세요.');
+    } catch (e) {
+      notify('영수증 인식 실패: ' + String(e));
+    } finally {
+      setScanMsg('');
+    }
+  };
 
   const submit = () => {
     if (amount <= 0) return notify('금액을 입력해 주세요.');
@@ -286,6 +303,15 @@ function EntrySheet({ init, onClose, save, remove }: {
           <button className={type === 'expense' ? 'on' : ''} disabled={editing} onClick={() => setType('expense')}>지출</button>
           <button className={type === 'income' ? 'on' : ''} disabled={editing} onClick={() => setType('income')}>수입</button>
         </div>
+        {type === 'expense' && !editing && (
+          <div className="scan">
+            <label className="scanbtn">
+              📷 영수증 사진으로 자동 입력
+              <input type="file" accept="image/*" hidden disabled={!!scanMsg} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) scan(f); }} />
+            </label>
+            {scanMsg && <small>{scanMsg}</small>}
+          </div>
+        )}
         <label>금액<AmountInput value={amount} onChange={setAmount} /></label>
         <div className="quick">
           {[1000, 10000, 50000, 100000].map(n => <button key={n} onClick={() => setAmount(amount + n)}>+{comma(n)}</button>)}
