@@ -307,10 +307,16 @@ function EntrySheet({ init, onClose, save, remove }: {
         </div>
         {type === 'expense' && !editing && (
           <div className="scan">
-            <label className="scanbtn">
-              📷 영수증 사진으로 자동 입력
-              <input type="file" accept="image/*" hidden disabled={!!scanMsg} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) scan(f); }} />
-            </label>
+            <div className="scanrow">
+              <label className="scanbtn">
+                📷 영수증 촬영
+                <input type="file" accept="image/*" capture="environment" hidden disabled={!!scanMsg} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) scan(f); }} />
+              </label>
+              <label className="scanbtn alt">
+                🖼 사진 선택
+                <input type="file" accept="image/*" hidden disabled={!!scanMsg} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) scan(f); }} />
+              </label>
+            </div>
             {scanMsg && <small>{scanMsg}</small>}
             {ocrText && !scanMsg && (
               <details className="ocr">
