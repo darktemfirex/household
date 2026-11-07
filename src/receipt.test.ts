@@ -94,6 +94,40 @@ wit 2 =2     :              5, 800
     expect(r.amount).toBe(20960);
     expect(r.merchant).toBe('이마트 의왕점');
   });
+  it('결제금액이 있으면 합계보다 결제금액을 우선 (할인 반영)', () => {
+    const r = parseReceipt(`GS THE FRESH
+2026/10/17[토] 16:22
+총합계 9,130원
+할인총금액 -2,050
+결제금액 7,080원
+신용카드 7,080원
+결제 후 잔액: 297,520`, now);
+    expect(r.amount).toBe(7080);
+    expect(r.date).toBe('2026-10-17');
+  });
+  it('정상가 합계·할인가 합계는 총액 후보에서 제외, 결제금액 우선', () => {
+    const r = parseReceipt(`Date : 2026-11-06 11:54:54
+정상가 합계 51,800
+할인가 합계 -12,000
+결제금액 39,800
+현금 39,800`, now);
+    expect(r.amount).toBe(39800);
+    expect(parseReceipt('정상가 합계 51,800\n할인가 합계 -12,000\n현금 39,800', now).amount).not.toBe(51800);
+  });
+  it('실제 OCR: 결제금액 글자가 깨져도 합계 − 할인 계산으로 복원 (51,800 − 12,000)', () => {
+    const r = parseReceipt(`Date       i 2026-11-06 11:54: 94  POS +
+제품명               수량  판매금액
+ON Air 립 세트               ㅣ 25,900
+MKHOUI3403 BEP 150 ~ 할인금액 _ -6, 000
+점삼가 합계                     51, 800
+할인가 합계                    -12, 000
+g EE:                      3,60
+=  가                     36, 182
+더  가 세                     3, 618
+8, 800`, now);
+    expect(r.amount).toBe(39800);
+    expect(r.date).toBe('2026-11-06');
+  });
   it('2자리 연도와 잘못된 날짜 처리', () => {
     expect(parseReceipt('26/11/06 합계 1,000', now).date).toBe('2026-11-06');
     expect(parseReceipt('2026-13-45 합계 1,000', now).date).toBe('');

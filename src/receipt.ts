@@ -13,7 +13,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const AMOUNT_KEYS = /(결\s*제\s*[금급]\s*액|승\s*인\s*[금급]\s*액|청\s*구\s*[금급]\s*액|받\s*을\s*[금급돈]|총\s*결\s*제|[합함한]\s*[계게]|총\s*[금급]?\s*액|판\s*매\s*[금급]|결\s*제\s*요\s*청|TOTAL|AMOUNT|SUM|결\s*제|승\s*인)/i;
 const PAID_WORDS = /(결\s*제|승\s*인|청\s*구|받\s*을|총\s*[금급]?\s*액|TOTAL)/i;
 const SKIP_LINE = /(영수증|사업자|대표|전화|TEL|주소|승인번호|카드번호|가맹점번호|단말기|거래일|POS|http|www|\d{2,4}-\d{3,4}-\d{4})/i;
-const NOT_PAID = /(부가세|부가가치세|과세|면세|세액|공급가|봉사료|할인|포인트|적립|거스름|잔액|받은\s*돈|받은금액|수량|단가)/;
+const NOT_PAID = /(부가세|부가가치세|과세|면세|세액|공급가|봉사료|할인|포인트|적립|거스름|잔액|받은\s*돈|받은금액|수량|단가|정상가)/;
 
 /** 한 줄에서 금액 후보(원 단위 정수) 추출. 콤마 있는 숫자 우선, 없으면 3자리 이상 숫자 */
 function numbersIn(line: string): number[] {
@@ -61,14 +61,36 @@ export function parseReceipt(raw: string, now = new Date()): ReceiptResult {
     const nx = lines[i + 1] ? numbersIn(lines[i + 1]) : [];
     return nx.length ? nx[nx.length - 1] : null;
   };
-  // 1순위: '합계' 줄 (OCR 이 '합 Al:' 처럼 깨뜨려도 줄 첫머리의 '합'으로 인식). 과세·면세·부가세 합계는 제외
-  const totals: number[] = [];
+  // 1순위: '결제금액' 줄 — 할인·포인트가 반영된 실제 결제액이라 합계보다 우선
+  const payAmounts: number[] = [];
   lines.forEach((l, i) => {
-    if (!/[합함한]\s*[계게]|판\s*매\s*합|^[합함한]\s+\S/.test(l)) return;
-    if (/(과세|면세|부가세|세액|공급가)/.test(l)) return;
+    if (!/결\s*제\s*(대\s*상\s*)?[금급]\s*액|최\s*종\s*결\s*제/.test(l)) return;
+    if (/(잔액|후|적립|포인트|환불|취소)/.test(l)) return;
     const n = lastNum(i);
-    if (n) totals.push(n);
+    if (n) payAmounts.push(n);
   });
+  // 2순위: '합계' 줄 (OCR 이 '합 Al:' 처럼 깨뜨려도 줄 첫머리의 '합'으로 인식). 과세·면세·부가세·정상가·할인 합계는 제외
+  // 합계 바로 아래(2줄 이내)에 할인(음수) 줄이 있으면 '합계 − 할인'으로 계산해 결제액을 구한다.
+  // (결제금액 글자가 깨져 못 읽어도 계산으로 복원: 51,800 − 12,000 = 39,800)
+  const entries: { n: number; list: boolean; adjusted: boolean }[] = [];
+  let base: { idx: number; line: number } | null = null;
+  lines.forEach((l, i) => {
+    const isTotal = /[합함한]\s*[계게]|판\s*매\s*합|^[합함한]\s+\S/.test(l);
+    const negative = /[-−–]\s*\d/.test(l);
+    if (negative && (isTotal || /할인/.test(l)) && base && i - base.line <= 2) {
+      const d = lastNum(i);
+      const e = entries[base.idx];
+      if (d && d < e.n) { e.n -= d; e.adjusted = true; base = { idx: base.idx, line: i }; } // 연속 할인 줄도 반영
+      return;
+    }
+    if (!isTotal || /(과세|면세|부가세|세액|공급가)/.test(l) || /할인/.test(l)) return;
+    const n = lastNum(i);
+    if (!n) return;
+    entries.push({ n, list: /정상가/.test(l), adjusted: false });
+    base = { idx: entries.length - 1, line: i };
+  });
+  // '정상가 합계'(할인 전 금액)는 할인 계산으로 보정된 경우에만 인정
+  const totals = entries.filter(e => !e.list || e.adjusted).map(e => e.n);
   // 2순위: 결제금액·받을금액·승인금액 등
   const keyed: number[] = [];
   lines.forEach((l, i) => {
@@ -78,7 +100,8 @@ export function parseReceipt(raw: string, now = new Date()): ReceiptResult {
     const n = lastNum(i);
     if (n) keyed.push(n);
   });
-  if (totals.length) amount = Math.max(...totals);
+  if (payAmounts.length) amount = Math.max(...payAmounts);
+  else if (totals.length) amount = Math.max(...totals);
   else if (keyed.length) amount = Math.max(...keyed);
   else {
     // 키워드가 없으면 전화번호·날짜 줄을 뺀 가장 큰 금액
