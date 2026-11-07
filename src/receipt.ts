@@ -9,9 +9,11 @@ export interface ReceiptResult {
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
-const AMOUNT_KEYS = /(결제\s*금액|승인\s*금액|청구\s*금액|받을\s*금액|받을\s*돈|총\s*결제|합\s*계|총\s*액|총\s*금액|TOTAL|AMOUNT)/i;
+// OCR 오인식(합계→한계/함계/합게, 금액→급액 등)까지 허용
+const AMOUNT_KEYS = /(결\s*제\s*[금급]\s*액|승\s*인\s*[금급]\s*액|청\s*구\s*[금급]\s*액|받\s*을\s*[금급돈]|총\s*결\s*제|[합함한]\s*[계게]|총\s*[금급]?\s*액|판\s*매\s*[금급]|결\s*제\s*요\s*청|TOTAL|AMOUNT|SUM|결\s*제|승\s*인)/i;
+const PAID_WORDS = /(결\s*제|승\s*인|청\s*구|받\s*을|총\s*[금급]?\s*액|TOTAL)/i;
 const SKIP_LINE = /(영수증|사업자|대표|전화|TEL|주소|승인번호|카드번호|가맹점번호|단말기|거래일|POS|http|www|\d{2,4}-\d{3,4}-\d{4})/i;
-const NOT_PAID = /(부가세|부가가치세|과세|면세|세액|공급가|봉사료|할인|포인트|적립|거스름|잔액|받은\s*돈|받은금액)/;
+const NOT_PAID = /(부가세|부가가치세|과세|면세|세액|공급가|봉사료|할인|포인트|적립|거스름|잔액|받은\s*돈|받은금액|수량|단가)/;
 
 /** 한 줄에서 금액 후보(원 단위 정수) 추출. 콤마 있는 숫자 우선, 없으면 3자리 이상 숫자 */
 function numbersIn(line: string): number[] {
@@ -46,7 +48,9 @@ export function parseReceipt(raw: string, now = new Date()): ReceiptResult {
   let amount = 0;
   const keyed: number[] = [];
   lines.forEach((l, i) => {
-    if (!AMOUNT_KEYS.test(l) || NOT_PAID.test(l)) return;
+    if (!AMOUNT_KEYS.test(l)) return;
+    if (NOT_PAID.test(l) && !PAID_WORDS.test(l)) return; // '부가세 합계' 같은 줄은 제외, '합계(부가세 포함)'은 허용
+    if (/승\s*인\s*번\s*호|카드\s*번\s*호/.test(l)) return;
     const nums = numbersIn(l);
     if (nums.length) keyed.push(nums[nums.length - 1]);
     else if (lines[i + 1]) { const nx = numbersIn(lines[i + 1]); if (nx.length) keyed.push(nx[nx.length - 1]); }
@@ -55,7 +59,12 @@ export function parseReceipt(raw: string, now = new Date()): ReceiptResult {
   else {
     // 키워드가 없으면 전화번호·날짜 줄을 뺀 가장 큰 금액
     const all = lines.filter(l => !SKIP_LINE.test(l) && !NOT_PAID.test(l) && !/\d{4}[-./]\d{1,2}[-./]\d{1,2}/.test(l)).flatMap(numbersIn);
-    if (all.length) amount = Math.max(...all);
+    // 총액은 보통 '합계'와 '카드 승인'에서 2번 이상 나오므로 반복되는 큰 금액을 우선
+    const count = new Map<number, number>();
+    all.forEach(n => count.set(n, (count.get(n) ?? 0) + 1));
+    const repeated = [...count].filter(([, c]) => c >= 2).map(([n]) => n);
+    if (repeated.length) amount = Math.max(...repeated);
+    else if (all.length) amount = Math.max(...all);
   }
 
   // 가게명: '상호/가맹점' 줄의 값, 없으면 위쪽에서 처음 나오는 한글 줄
@@ -95,6 +104,8 @@ export async function readReceipt(file: File, onProgress?: (msg: string) => void
     logger: m => { if (m.status === 'recognizing text') onProgress?.(`글자 읽는 중… ${Math.round(m.progress * 100)}%`); },
   });
   try {
+    // 영수증은 한 줄에 '항목 ... 금액'이 이어지는 단일 단 구조라 줄 단위 인식(PSM 4)이 유리
+    await worker.setParameters({ tessedit_pageseg_mode: '4' as never, preserve_interword_spaces: '1' });
     const { data } = await worker.recognize(img);
     return parseReceipt(data.text);
   } finally {

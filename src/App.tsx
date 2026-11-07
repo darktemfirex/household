@@ -273,10 +273,12 @@ function EntrySheet({ init, onClose, save, remove }: {
   const [memo, setMemo] = useState(ex?.memo ?? inc?.title ?? '');
   const editing = !!init.item;
   const [scanMsg, setScanMsg] = useState('');
+  const [ocrText, setOcrText] = useState('');
 
   const scan = async (file: File) => {
     try {
       const r = await readReceipt(file, setScanMsg);
+      setOcrText(r.text);
       if (r.amount > 0) setAmount(r.amount);
       if (r.date) setDate(r.date);
       if (r.merchant) setMemo(r.merchant);
@@ -310,6 +312,12 @@ function EntrySheet({ init, onClose, save, remove }: {
               <input type="file" accept="image/*" hidden disabled={!!scanMsg} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) scan(f); }} />
             </label>
             {scanMsg && <small>{scanMsg}</small>}
+            {ocrText && !scanMsg && (
+              <details className="ocr">
+                <summary>인식된 글자 보기 (금액이 틀리면 여기서 확인)</summary>
+                <pre>{ocrText}</pre>
+              </details>
+            )}
           </div>
         )}
         <label>금액<AmountInput value={amount} onChange={setAmount} /></label>
