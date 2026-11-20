@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { cycleKeyOf, shiftKey, summarize, todayStr, type Summary } from './calc';
+import { cycleKeyOf, daysBetween, shiftKey, summarize, todayStr, type Summary } from './calc';
 import { comma, digits, md, mdw, uid, won } from './format';
 import { notify, onNotify } from './notify';
 import { readReceipt } from './receipt';
@@ -111,7 +111,7 @@ export default function App() {
       )}
       <main>
         {tab === 'home' && <Home sum={sum} settings={settings} curKey={curKey} setKey={setKey} goSettings={() => setTab('settings')} />}
-        {tab === 'ledger' && <Ledger sum={sum} setKey={setKey} onEdit={it => setSheet({ type: it.kind as 'expense' | 'income', item: it })} />}
+        {tab === 'ledger' && <Ledger sum={sum} today={today} setKey={setKey} onEdit={it => setSheet({ type: it.kind as 'expense' | 'income', item: it })} />}
         {tab === 'fixed' && <FixedTab items={items} save={save} remove={remove} />}
         {tab === 'settings' && <IncomeTab items={items} settings={settings} save={save} remove={remove} status={status} user={user} store={store} />}
       </main>
@@ -202,7 +202,7 @@ function Home({ sum, settings, curKey, setKey, goSettings }: { sum: Summary; set
 }
 
 /* ---------------- 내역 ---------------- */
-function Ledger({ sum, setKey, onEdit }: { sum: Summary; setKey: (k: string) => void; onEdit: (i: Expense | Income) => void }) {
+function Ledger({ sum, today, setKey, onEdit }: { sum: Summary; today: string; setKey: (k: string) => void; onEdit: (i: Expense | Income) => void }) {
   const [filter, setFilter] = useState<'all' | Method | 'income'>('all');
   const rows: (Expense | Income)[] = [
     ...(filter === 'income' ? [] : sum.expenses.filter(e => filter === 'all' || e.method === filter)),
@@ -210,9 +210,19 @@ function Ledger({ sum, setKey, onEdit }: { sum: Summary; setKey: (k: string) => 
   ].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
   const groups = new Map<string, (Expense | Income)[]>();
   rows.forEach(r => groups.set(r.date, [...(groups.get(r.date) ?? []), r]));
+  const dday = sum.isCurrent ? daysBetween(today, sum.end) : null;
+  const spent = sum.expenses.reduce((a, b) => a + b.amount, 0);
+  const spentCard = sum.expenses.filter(e => e.method === 'card').reduce((a, b) => a + b.amount, 0);
   return (
     <>
       <CycleNav sum={sum} setKey={setKey} />
+      <section className="card">
+        <dl>
+          {dday !== null && <div><dt>카드 주기 종료({md(sum.end)})까지</dt><dd className="dday">{dday === 0 ? 'D-DAY' : `D-${dday}`}</dd></div>}
+          <div className="total"><dt>{Number(sum.key.slice(5))}월 지출 합계</dt><dd className="neg">{won(spent)}</dd></div>
+          <div><dt>카드 {won(spentCard)}</dt><dd>현금/이체 {won(spent - spentCard)}</dd></div>
+        </dl>
+      </section>
       <div className="seg">
         {([['all', '전체'], ['card', '카드'], ['cash', '현금/이체'], ['income', '수입']] as const).map(([v, l]) => (
           <button key={v} className={filter === v ? 'on' : ''} onClick={() => setFilter(v)}>{l}</button>

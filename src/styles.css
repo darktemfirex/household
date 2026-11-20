@@ -94,3 +94,5 @@ select { width: 100%; margin-top: 6px; padding: 11px 12px; border: 1px solid var
 .scan small { display: block; margin: 6px 0 0; text-align: center; }
 .ocr { font-size: 12px; color: var(--sub); margin: 8px 0 0; } .ocr pre { max-height: 140px; white-space: pre-wrap; }
 .scanrow { display: flex; gap: 8px; } .scanrow .scanbtn { flex: 1; } .scanbtn.alt { border-color: var(--line); color: var(--text); font-weight: 600; }
+
+.dday { background: #ff6b00; color: #fff; font-weight: 800; font-size: 18px; padding: 3px 12px; border-radius: 999px; letter-spacing: .5px; box-shadow: 0 2px 8px rgba(255,107,0,.4); }
